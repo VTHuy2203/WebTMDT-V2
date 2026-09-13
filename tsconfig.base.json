@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@marketplace/types": ["packages/types/src/index.ts"],
+      "@marketplace/config": ["packages/config/src/index.ts"],
+      "@marketplace/utils": ["packages/utils/src/index.ts"],
+      "@marketplace/validation": ["packages/validation/src/index.ts"],
+      "@marketplace/ui": ["packages/ui/src/index.ts"],
+      "@marketplace/auth": ["packages/auth/src/index.ts"],
+      "@marketplace/analytics": ["packages/analytics/src/index.ts"],
+      "@marketplace/api-client": ["packages/api-client/src/index.ts"]
+    }
+  }
+}

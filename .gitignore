@@ -1,0 +1,17 @@
+node_modules
+.env
+.env.*
+!.env.example
+.next
+dist
+build
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.tmp-chrome-*/
+.runlogs/
+coverage/
+.cache/
+.turbo/
+*.tsbuildinfo

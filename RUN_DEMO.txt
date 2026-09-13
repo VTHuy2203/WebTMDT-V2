@@ -1,0 +1,92 @@
+CHẠY DEMO TOÀN BỘ DỰ ÁN (POWERSHELL)
+
+1. Đi tới thư mục dự án
+cd D:\WebTMDT
+
+2. Cài thư viện (chỉ cần chạy lần đầu hoặc khi package thay đổi)
+npm install
+
+3. Cấu hình cổng PostgreSQL và Redis cho phiên PowerShell hiện tại
+$env:POSTGRES_PORT='5433'
+$env:REDIS_PORT='56379'
+
+4. Khởi động PostgreSQL, Redis và MinIO
+docker compose up -d postgres redis minio
+
+5. Kiểm tra trạng thái container
+docker compose ps
+
+6. Sinh Prisma Client
+npm run db:generate
+
+7. Đồng bộ cấu trúc database
+npm run db:push
+
+8. Tạo role và duy nhất tài khoản Admin mặc định
+npm run prisma:seed --workspace=@marketplace/api
+
+9. Chạy Backend API - mở terminal PowerShell mới
+cd D:\WebTMDT
+npm run dev:api
+
+10. Chạy Worker - mở terminal PowerShell mới
+cd D:\WebTMDT
+npm run dev:worker
+
+11. Chạy website Buyer - mở terminal PowerShell mới
+cd D:\WebTMDT
+npm run dev:buyer
+
+12. Chạy website Seller - mở terminal PowerShell mới
+cd D:\WebTMDT
+npm run dev:seller
+
+13. Chạy website Admin - mở terminal PowerShell mới
+cd D:\WebTMDT
+npm run dev:admin
+
+ĐỊA CHỈ TRUY CẬP
+
+Buyer:        http://localhost:3000
+Seller:       http://localhost:3001
+Admin:        http://localhost:3002
+API:          http://localhost:4000/api/v1
+Swagger:      http://localhost:4000/api/docs
+Health check: http://localhost:4000/api/v1/health/ready
+MinIO:        http://localhost:9001
+
+TÀI KHOẢN MẶC ĐỊNH
+
+Admin:  admin@marketplace.local
+Mật khẩu: Marketplace@123
+
+Buyer tự đăng ký tại http://localhost:3000.
+Seller dùng tài khoản Buyer để gửi hồ sơ mở gian hàng; sau khi Admin duyệt, đăng nhập tại http://localhost:3001.
+
+KIỂM TRA DỰ ÁN
+
+Build toàn bộ source
+npm run build
+
+Chạy unit/integration test API
+npm run test:api
+
+Chạy smoke test (yêu cầu API và hạ tầng đang hoạt động)
+npm run test:smoke
+
+Kiểm tra chat Buyer ↔ Admin và Socket.IO realtime
+npm run test:chat
+
+DỪNG DỰ ÁN
+
+Dừng từng tiến trình API/Worker/Frontend
+Nhấn Ctrl+C trong từng terminal đang chạy.
+
+Dừng container nhưng giữ dữ liệu
+docker compose stop
+
+Dừng và xóa container nhưng vẫn giữ volume dữ liệu
+docker compose down
+
+Xóa toàn bộ container và dữ liệu demo (chỉ dùng khi muốn làm lại từ đầu)
+docker compose down -v

@@ -1,0 +1,60 @@
+{
+  "name": "marketplace-platform",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run start:dev --workspace=@marketplace/api",
+    "dev:worker": "npm run start:dev --workspace=@marketplace/worker",
+    "build:api": "npm run build --workspace=@marketplace/api",
+    "db:generate": "npm run prisma:generate --workspace=@marketplace/api",
+    "db:push": "npm run prisma:push --workspace=@marketplace/api",
+    "db:migrate": "npm run prisma:migrate --workspace=@marketplace/api",
+    "test:api": "npm test --workspace=@marketplace/api",
+    "test:smoke": "npm run test:smoke --workspace=@marketplace/api",
+    "test:chat": "npm run test:chat --workspace=@marketplace/api",
+    "dev:buyer": "npm run dev --workspace=@marketplace/buyer-web",
+    "dev:seller": "npm run dev --workspace=@marketplace/seller-web",
+    "dev:admin": "npm run dev --workspace=@marketplace/admin-web",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "eslint apps/api/src apps/worker/src",
+    "typecheck": "npm run typecheck --workspace=@marketplace/api && npm run typecheck --workspace=@marketplace/worker && tsc --noEmit -p apps/buyer-web/tsconfig.json && tsc --noEmit -p apps/seller-web/tsconfig.json && tsc --noEmit -p apps/admin-web/tsconfig.json"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.44.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.3.0",
+    "zod": "^3.23.8",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^20.14.2",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.4.19",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.57.0",
+    "vite": "^8.3.0"
+  },
+  "overrides": {
+    "@nestjs/platform-express": {
+      "multer": "2.3.0"
+    },
+    "@prisma/config": {
+      "deepmerge-ts": "8.0.2"
+    }
+  }
+}
