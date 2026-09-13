@@ -21,7 +21,7 @@ CDN/domain staging. Không dùng mock hoặc localhost để thay thế các c�
 | Logging/Sentry code | Đạt local | redaction, correlation ID, 5xx stack và capture test |
 | Dependency security | Đạt | `npm audit` trả 0 vulnerability sau clean install |
 | Repo hygiene | Đạt local | `.env`, output build/coverage, browser temp và runlog đều ignored/không track |
-| CI + branch protection | Chờ external | GitHub Actions từng `startup_failure/jobs=0`; cần run xanh sau push và bật required check |
+| CI + branch protection | Chờ external | Run `34780049794` tạo job `verify` nhưng GitHub không chạy step nào vì tài khoản bị khoá do vấn đề billing; cần mở khoá, rerun xanh và bật required check |
 | Sentry dashboard 4 app | Chờ credential | cần DSN riêng cho API/buyer/seller/admin và event ID/dashboard thật |
 
 ## Giai đoạn 2
@@ -38,7 +38,8 @@ CDN/domain staging. Không dùng mock hoặc localhost để thay thế các c�
 
 ## Cổng owner phải cung cấp để đóng nghiệm thu staging
 
-1. GitHub Actions hoạt động và quyền bật branch protection/required check.
+1. Gỡ trạng thái account lock/billing của GitHub, rerun `34780049794`, sau đó
+   bật branch protection và required check `verify`.
 2. Bốn Sentry DSN staging (API, buyer, seller, admin).
 3. GHN staging token, shop ID, district/ward kho và tài khoản dashboard đối chiếu.
 4. Domain CDN staging cùng quyền cấu hình origin access.
@@ -46,4 +47,6 @@ CDN/domain staging. Không dùng mock hoặc localhost để thay thế các c�
    liệu tài nguyên/Redis/PgBouncer; kết quả local 30 giây chỉ là preflight.
 
 Không tạo thêm repo nếu GitHub tiếp tục lỗi giống hai repo hiện tại; tiếp tục
-escalate Ticket #4753362 với run ID `34738824351` và `34740175721`.
+escalate Ticket #4753362 với run ID `34738824351`, `34740175721` và bằng chứng
+mới `34780049794`: workflow/job được tạo nhưng annotation xác nhận account bị
+lock do billing nên không step nào được chạy.

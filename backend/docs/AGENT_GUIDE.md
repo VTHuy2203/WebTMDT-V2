@@ -58,7 +58,7 @@ Một blocker bên ngoài (ví dụ GitHub Actions `startup_failure` cấp tài 
 
 ### Báo cáo hiện trạng — 2026-09-14
 
-**Giai đoạn 1:** coverage commerce/auth đều trên 70%; 60 test API xanh; RBAC đã chuyển sang `@Roles()` + global `RolesGuard`; Sentry và structured logging/correlation/redaction/Loki-Alloy-Grafana đã tích hợp; repo không track `.env`, coverage, build output hay thư mục browser tạm. Chưa đóng DoD vì GitHub Actions vẫn `startup_failure`/jobs=0 trên cả repo cũ và mới, branch protection chưa xác minh, và chưa có DSN thật để xác nhận event trên dashboard Sentry. Các thay đổi local hiện cũng chưa được commit/push.
+**Giai đoạn 1:** coverage commerce/auth đều trên 70%; 61 test API xanh; RBAC đã chuyển sang `@Roles()` + global `RolesGuard`; Sentry và structured logging/correlation/redaction/Loki-Alloy-Grafana đã tích hợp; dependency audit sạch; repo không track `.env`, coverage, build output hay thư mục browser tạm. Code đã được commit/push lên repo V2. Run `34780049794` đã tạo workflow/job thật nhưng GitHub từ chối khởi động step với annotation tài khoản bị khoá do billing; vì vậy CI/branch protection vẫn là external blocker. Ngoài ra chưa có bốn DSN thật để xác nhận event trên dashboard Sentry.
 
 **Giai đoạn 2:** toàn bộ code và integration local đã đạt, gồm hai API sau Nginx, Redis adapter, Meilisearch thật và preflight k6 500 RPS (0% lỗi, p95 7,57 ms). Chi tiết và các external gate còn lại ở `backend/docs/PHASE1_PHASE2_ACCEPTANCE.md` và `backend/docs/PHASE2_RUNBOOK.md`. Các DoD cần credential/domain/staging không được coi là hoàn tất cho tới khi có bằng chứng thật.
 
