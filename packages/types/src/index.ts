@@ -452,6 +452,9 @@ export interface Address {
   province: string;
   district: string;
   ward: string;
+  /** GHN legacy address IDs used by the fee endpoint. Names remain authoritative for display. */
+  districtId?: number;
+  wardCode?: string;
   streetAddress: string;
   detail?: string;
   label: 'HOME' | 'OFFICE' | 'OTHER';

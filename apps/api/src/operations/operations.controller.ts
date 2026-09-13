@@ -15,6 +15,7 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { AuthGuard } from "../auth/auth.guard";
+import { Roles } from "../auth/roles.decorator";
 import { CommerceService } from "../commerce/commerce.service";
 import { MessagingService } from "../platform/messaging.service";
 import { MessagingGateway } from "../platform/messaging.gateway";
@@ -114,14 +115,7 @@ export class OperationsController {
     @Param("variantId") id: string,
     @Body("stock") stock: number,
   ) {
-    const shop = await this.ops.sellerShop(req.user.id);
-    return this.ops.db.productVariant.updateMany({
-      where: { id, product: { shopId: shop.id } },
-      data: {
-        stockOnHand: Math.max(0, Number(stock)),
-        version: { increment: 1 },
-      },
-    });
+    return this.ops.updateStock(req.user.id, id, stock);
   }
   @Get("seller/dashboard") async sellerDashboard(@Req() req: any) {
     const shop = await this.ops.sellerShop(req.user.id);
@@ -376,8 +370,7 @@ export class OperationsController {
     };
   }
 
-  @Get("admin/dashboard") async adminDashboard(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/dashboard") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") async adminDashboard() {
     const [
       totalOrders,
       activeUsers,
@@ -410,70 +403,65 @@ export class OperationsController {
       pendingProductsCount,
     };
   }
-  @Get("admin/seller-applications") adminApplications(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/seller-applications") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminApplications() {
     return this.ops.db.sellerApplication.findMany({
       orderBy: { createdAt: "desc" },
     });
   }
-  @Post("admin/seller-applications/:id/review") @HttpCode(200) reviewSeller(
+  @Post("admin/seller-applications/:id/review") @HttpCode(200) @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") reviewSeller(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
     return this.ops.reviewSeller(req.user, id, body);
   }
-  @Get("admin/products/pending") adminProducts(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/products/pending") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminProducts() {
     return this.ops.db.product.findMany({
       where: { status: "PENDING_REVIEW" },
       include: { variants: true, appPlans: true },
     });
   }
-  @Post("admin/products/:id/review") @HttpCode(200) reviewProduct(
+  @Post("admin/products/:id/review") @HttpCode(200) @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") reviewProduct(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
     return this.ops.reviewProduct(req.user, id, body);
   }
-  @Get("admin/orders") adminOrders(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/orders") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminOrders() {
     return this.commerce.adminOrders();
   }
-  @Get("admin/shops") adminShops(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/shops") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminShops() {
     return this.ops.db.shop.findMany();
   }
-  @Post("admin/shops/:id/warn") sanctionWarn(
+  @Post("admin/shops/:id/warn") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") sanctionWarn(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
     return this.sanction(req, id, "WARNING", body);
   }
-  @Post("admin/shops/:id/suspend") sanctionSuspend(
+  @Post("admin/shops/:id/suspend") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") sanctionSuspend(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
     return this.sanction(req, id, "SUSPENDED", body);
   }
-  @Post("admin/shops/:id/ban") sanctionBan(
+  @Post("admin/shops/:id/ban") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") sanctionBan(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
     return this.sanction(req, id, "BANNED", body);
   }
-  @Post("admin/shops/:id/reactivate") sanctionRestore(
+  @Post("admin/shops/:id/reactivate") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") sanctionRestore(
     @Req() req: any,
     @Param("id") id: string,
   ) {
     return this.sanction(req, id, "ACTIVE", {});
   }
   private sanction(req: any, id: string, status: string, body: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
     return this.ops.db.$transaction([
       this.ops.db.shop.update({
         where: { id },
@@ -491,53 +479,45 @@ export class OperationsController {
       }),
     ]);
   }
-  @Get("admin/reports") adminReports(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/reports") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminReports() {
     return this.ops.docs("USER_REPORT");
   }
-  @Get("admin/digital-disputes") adminDisputes(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/digital-disputes") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminDisputes(@Req() req: any) {
     return this.ops.disputesFor(req.user.id, req.user.roles);
   }
-  @Post("admin/digital-disputes/:id/resolve") resolveDispute(
+  @Post("admin/digital-disputes/:id/resolve") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") resolveDispute(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
     return this.ops.resolveDispute(req.user, id, body);
   }
-  @Get("admin/game-catalog") adminGames(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/game-catalog") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminGames() {
     return this.ops.docs("GAME_CATALOG");
   }
-  @Post("admin/game-catalog") adminGame(@Req() req: any, @Body() body: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
+  @Post("admin/game-catalog") @Roles("ADMIN", "SUPER_ADMIN") adminGame(@Req() req: any, @Body() body: any) {
     return this.ops.upsertCatalog("GAME_CATALOG", body);
   }
-  @Get("admin/application-catalog") adminApps(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/application-catalog") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminApps() {
     return this.ops.docs("APP_CATALOG");
   }
-  @Post("admin/application-catalog") adminApp(
+  @Post("admin/application-catalog") @Roles("ADMIN", "SUPER_ADMIN") adminApp(
     @Req() req: any,
     @Body() body: any,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     return this.ops.upsertCatalog("APP_CATALOG", body);
   }
-  @Get("admin/game-account-products") adminGameProducts(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/game-account-products") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminGameProducts() {
     return this.ops.db.product.findMany({
       where: { type: "DIGITAL_GAME_ACCOUNT" },
     });
   }
-  @Get("admin/app-account-products") adminAppProducts(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
+  @Get("admin/app-account-products") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") adminAppProducts() {
     return this.ops.db.product.findMany({
       where: { type: "DIGITAL_APP_ACCOUNT" },
     });
   }
-  @Post("admin/game-account-products/:id/:action") reviewGame(
+  @Post("admin/game-account-products/:id/:action") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") reviewGame(
     @Req() req: any,
     @Param("id") id: string,
     @Param("action") action: string,
@@ -546,7 +526,7 @@ export class OperationsController {
       action: action.toUpperCase(),
     });
   }
-  @Post("admin/app-account-products/:id/:action") reviewApp(
+  @Post("admin/app-account-products/:id/:action") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") reviewApp(
     @Req() req: any,
     @Param("id") id: string,
     @Param("action") action: string,
@@ -555,8 +535,7 @@ export class OperationsController {
       action: action.toUpperCase(),
     });
   }
-  @Get("admin/users") async adminUsers(@Req() req: any, @Query() q: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
+  @Get("admin/users") @Roles("ADMIN", "SUPER_ADMIN") async adminUsers(@Req() req: any, @Query() q: any) {
     const users = await this.ops.db.user.findMany({
       where: {
         ...(q.status ? { status: q.status } : {}),
@@ -588,8 +567,7 @@ export class OperationsController {
       createdAt: user.createdAt.toISOString(),
     }));
   }
-  @Get("admin/users/:id") async adminUser(@Req() req: any, @Param("id") id: string) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
+  @Get("admin/users/:id") @Roles("ADMIN", "SUPER_ADMIN") async adminUser(@Req() req: any, @Param("id") id: string) {
     const user = await this.ops.db.user.findUnique({
       where: { id },
       select: {
@@ -613,33 +591,30 @@ export class OperationsController {
         }
       : null;
   }
-  @Post("admin/users/:id/ban") banUser(
+  @Post("admin/users/:id/ban") @Roles("ADMIN", "SUPER_ADMIN") banUser(
     @Req() req: any,
     @Param("id") id: string,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     return this.ops.db.user.update({
       where: { id },
       data: { status: "BANNED" },
       select: { id: true, fullName: true, emailNormalized: true, status: true },
     });
   }
-  @Post("admin/users/:id/unban") unbanUser(
+  @Post("admin/users/:id/unban") @Roles("ADMIN", "SUPER_ADMIN") unbanUser(
     @Req() req: any,
     @Param("id") id: string,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     return this.ops.db.user.update({
       where: { id },
       data: { status: "ACTIVE" },
       select: { id: true, fullName: true, emailNormalized: true, status: true },
     });
   }
-  @Delete("admin/users/:id") deleteUser(
+  @Delete("admin/users/:id") @Roles("SUPER_ADMIN") deleteUser(
     @Req() req: any,
     @Param("id") id: string,
   ) {
-    this.ops.requireRole(req.user, ["SUPER_ADMIN"]);
     return this.ops.db.user.update({
       where: { id },
       data: {
@@ -651,49 +626,43 @@ export class OperationsController {
       select: { id: true, fullName: true, status: true, deletedAt: true },
     });
   }
-  @Post("admin/users/:id/notes") note(
+  @Post("admin/users/:id/notes") @Roles("ADMIN", "SUPER_ADMIN") note(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     return this.ops.createDoc("USER_NOTE", body, id);
   }
-  @Get("admin/categories/schemas") schemas(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
+  @Get("admin/categories/schemas") @Roles("ADMIN", "SUPER_ADMIN") schemas() {
     return this.ops.db.category.findMany();
   }
-  @Post("admin/categories/schemas") saveSchema(
+  @Post("admin/categories/schemas") @Roles("ADMIN", "SUPER_ADMIN") saveSchema(
     @Req() req: any,
     @Body() body: any,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     return this.ops.db.category.update({
       where: { id: body.categoryId },
       data: { attributeSchema: body.fields, schemaVersion: { increment: 1 } },
     });
   }
-  @Post("admin/reports/:id/resolve") resolveReport(
+  @Post("admin/reports/:id/resolve") @Roles("ADMIN", "SUPER_ADMIN", "MODERATOR") resolveReport(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
     return this.ops.db.resourceDocument.update({
       where: { id },
       data: { status: "RESOLVED", document: body },
     });
   }
-  @Get("admin/conversations") conversations(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
+  @Get("admin/conversations") @Roles("ADMIN", "SUPER_ADMIN") conversations() {
     return this.messaging.adminList();
   }
-  @Post("admin/conversations/:id/reply") async reply(
+  @Post("admin/conversations/:id/reply") @Roles("ADMIN", "SUPER_ADMIN") async reply(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     const result = await this.messaging.adminReply(req.user.id, id, body);
     const participantIds = await this.messaging.participantIds(id);
     for (const message of result.messages) {
@@ -706,20 +675,18 @@ export class OperationsController {
     }
     return result.message;
   }
-  @Patch("admin/conversations/:id/status") conversationStatus(
+  @Patch("admin/conversations/:id/status") @Roles("ADMIN", "SUPER_ADMIN") conversationStatus(
     @Req() req: any,
     @Param("id") id: string,
     @Body("status") status: string,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     return this.messaging.adminStatus(id, status);
   }
-  @Patch("admin/conversations/:id/automation") async conversationAutomation(
+  @Patch("admin/conversations/:id/automation") @Roles("ADMIN", "SUPER_ADMIN") async conversationAutomation(
     @Req() req: any,
     @Param("id") id: string,
     @Body("enabled") enabled: boolean,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     if (typeof enabled !== "boolean")
       throw new BadRequestException({ code: "INVALID_AUTOMATION_STATE", message: "Trạng thái Auto không hợp lệ" });
     const conversation = await this.messaging.adminAutomation(
@@ -734,12 +701,11 @@ export class OperationsController {
       this.messagingGateway.emitToUser(userId, "conversation.automation.changed", payload);
     return payload;
   }
-  @Put("admin/users/:id") async legacyUpdateUser(
+  @Put("admin/users/:id") @Roles("ADMIN", "SUPER_ADMIN") async legacyUpdateUser(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     const allowed: any = {};
     if (body.fullName) allowed.fullName = body.fullName;
     if (body.phoneNumber) allowed.phoneNormalized = body.phoneNumber;
@@ -755,12 +721,11 @@ export class OperationsController {
       },
     });
   }
-  @Post("admin/users/:id/adjust-balance") async adjustBalance(
+  @Post("admin/users/:id/adjust-balance") @Roles("SUPER_ADMIN", "FINANCE_ADMIN") async adjustBalance(
     @Req() req: any,
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    this.ops.requireRole(req.user, ["SUPER_ADMIN", "FINANCE_ADMIN"]);
     const amount = BigInt(body.amount ?? 0);
     const wallet = await this.ops.db.wallet.upsert({
       where: {
@@ -791,34 +756,27 @@ export class OperationsController {
     });
     return { newBalance: Number(wallet.availableAmount) };
   }
-  @Post("app-accounts/applications") createApplication(
-    @Req() req: any,
+  @Post("app-accounts/applications") @Roles("ADMIN", "SUPER_ADMIN") createApplication(
     @Body() body: any,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     return this.ops.upsertCatalog("APP_CATALOG", body);
   }
-  @Put("app-accounts/applications/:id") async updateApplication(
-    @Req() req: any,
+  @Put("app-accounts/applications/:id") @Roles("ADMIN", "SUPER_ADMIN") async updateApplication(
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     return this.ops.db.resourceDocument.update({
       where: { id },
       data: { document: body, slug: body.slug },
     });
   }
-  @Delete("app-accounts/applications/:id") async deleteApplication(
-    @Req() req: any,
+  @Delete("app-accounts/applications/:id") @Roles("ADMIN", "SUPER_ADMIN") async deleteApplication(
     @Param("id") id: string,
   ) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
     await this.ops.db.resourceDocument.delete({ where: { id } });
     return null;
   }
-  @Post("app-accounts/applications/reset") resetApplications(@Req() req: any) {
-    this.ops.requireRole(req.user, ["ADMIN", "SUPER_ADMIN"]);
+  @Post("app-accounts/applications/reset") @Roles("ADMIN", "SUPER_ADMIN") resetApplications() {
     return [];
   }
   @Delete("seller/game-inventory/:id") deleteGameInventory(

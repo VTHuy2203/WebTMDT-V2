@@ -2,12 +2,14 @@ import { Controller, Get, ServiceUnavailableException } from "@nestjs/common";
 import Redis from "ioredis";
 import { PrismaService } from "./prisma.service";
 import { StorageService } from "./platform/storage.service";
+import { ProductSearchService } from "./catalog/product-search.service";
 
 @Controller("health")
 export class HealthController {
   constructor(
     private readonly db: PrismaService,
     private readonly storage: StorageService,
+    private readonly search: ProductSearchService,
   ) {}
   @Get("live") live() {
     return { status: "ok" };
@@ -27,6 +29,7 @@ export class HealthController {
       redis.disconnect();
       checks.redis = "up";
       checks.objectStorage = await this.storage.health();
+      checks.search = await this.search.health();
     } catch (error) {
       throw new ServiceUnavailableException({
         code: "DEPENDENCY_UNAVAILABLE",

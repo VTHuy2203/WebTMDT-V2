@@ -5,8 +5,11 @@ import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { AuthController } from "./auth/auth.controller";
 import { AuthGuard } from "./auth/auth.guard";
 import { AuthService } from "./auth/auth.service";
+import { RolesGuard } from "./auth/roles.guard";
 import { CatalogController } from "./catalog/catalog.controller";
 import { CatalogService } from "./catalog/catalog.service";
+import { CatalogCacheService } from "./catalog/catalog-cache.service";
+import { ProductSearchService } from "./catalog/product-search.service";
 import { CommerceController } from "./commerce/commerce.controller";
 import { CommerceService } from "./commerce/commerce.service";
 import { OperationsController } from "./operations/operations.controller";
@@ -53,6 +56,8 @@ import { StorageService } from "./platform/storage.service";
     AuthService,
     AuthGuard,
     CatalogService,
+    CatalogCacheService,
+    ProductSearchService,
     CommerceService,
     OperationsService,
     StorageService,
@@ -63,6 +68,7 @@ import { StorageService } from "./platform/storage.service";
     IdentityService,
     EmailService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })
 export class AppModule {}

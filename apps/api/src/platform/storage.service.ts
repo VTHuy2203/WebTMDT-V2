@@ -80,12 +80,15 @@ export class StorageService implements OnModuleInit {
       "application/pdf": "pdf",
     };
     const objectKey = `${userId}/${new Date().toISOString().slice(0, 10)}/${randomUUID()}.${extension[mimeType]}`;
+    const purpose = String(input.purpose ?? "PRODUCT").toUpperCase();
+    const isPublic = ["PRODUCT", "SHOP", "REVIEW"].includes(purpose);
+    const cacheControl = isPublic ? "public, max-age=31536000, immutable" : "private, no-store";
     const media = await this.db.mediaObject.create({
       data: {
         ownerId: userId,
         objectKey,
         bucket: this.bucket,
-        purpose: String(input.purpose ?? "PRODUCT").toUpperCase(),
+        purpose,
         mimeType,
         sizeBytes,
         checksum: input.checksum ? String(input.checksum) : null,
@@ -100,6 +103,7 @@ export class StorageService implements OnModuleInit {
         Key: objectKey,
         ContentType: mimeType,
         ContentLength: sizeBytes,
+        CacheControl: cacheControl,
       }),
       { expiresIn: 10 * 60 },
     );
@@ -107,7 +111,7 @@ export class StorageService implements OnModuleInit {
       id: media.id,
       uploadUrl,
       method: "PUT",
-      headers: { "Content-Type": mimeType },
+      headers: { "Content-Type": mimeType, "Cache-Control": cacheControl },
       expiresInSeconds: 600,
     };
   }
@@ -130,7 +134,10 @@ export class StorageService implements OnModuleInit {
         code: "UPLOAD_SIZE_MISMATCH",
         message: "Kích thước tệp không khớp",
       });
-    const publicUrl = `/api/v1/media/${media.id}/content`;
+    const cdnBase = process.env.CDN_PUBLIC_BASE_URL?.replace(/\/$/, "");
+    const publicUrl = ["PRODUCT", "SHOP", "REVIEW"].includes(media.purpose) && cdnBase
+      ? `${cdnBase}/${media.objectKey}`
+      : `/api/v1/media/${media.id}/content`;
     return this.db.mediaObject.update({
       where: { id },
       data: { status: "READY", completedAt: new Date(), publicUrl },

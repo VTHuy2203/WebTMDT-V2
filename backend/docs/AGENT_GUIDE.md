@@ -45,6 +45,23 @@
 
 ## 2. Lộ trình 5 giai đoạn
 
+### Cổng nghiệm thu áp dụng cho mọi giai đoạn
+
+Để không đánh đồng "đã viết code" với "đã vận hành thật", mỗi hạng mục phải được báo cáo theo bốn mức độc lập:
+
+1. **Implemented:** code, migration, cấu hình mẫu và unit test đã hoàn tất.
+2. **Integrated:** đã chạy với dependency thật ở local/integration environment.
+3. **Staging verified:** đã chạy bằng credential/domain/load balancer staging và lưu bằng chứng.
+4. **Production approved:** owner nghiệp vụ/bảo mật đã duyệt; monitoring và rollback sẵn sàng.
+
+Một blocker bên ngoài (ví dụ GitHub Actions `startup_failure` cấp tài khoản) phải được ghi nhận, nhưng không ngăn làm code của giai đoạn sau nếu thay đổi độc lập và toàn bộ kiểm chứng local vẫn xanh. Tuyệt đối không tick staging/production chỉ dựa trên mock hoặc localhost.
+
+### Báo cáo hiện trạng — 2026-09-14
+
+**Giai đoạn 1:** coverage commerce/auth đều trên 70%; 60 test API xanh; RBAC đã chuyển sang `@Roles()` + global `RolesGuard`; Sentry và structured logging/correlation/redaction/Loki-Alloy-Grafana đã tích hợp; repo không track `.env`, coverage, build output hay thư mục browser tạm. Chưa đóng DoD vì GitHub Actions vẫn `startup_failure`/jobs=0 trên cả repo cũ và mới, branch protection chưa xác minh, và chưa có DSN thật để xác nhận event trên dashboard Sentry. Các thay đổi local hiện cũng chưa được commit/push.
+
+**Giai đoạn 2:** toàn bộ code và integration local đã đạt, gồm hai API sau Nginx, Redis adapter, Meilisearch thật và preflight k6 500 RPS (0% lỗi, p95 7,57 ms). Chi tiết và các external gate còn lại ở `backend/docs/PHASE1_PHASE2_ACCEPTANCE.md` và `backend/docs/PHASE2_RUNBOOK.md`. Các DoD cần credential/domain/staging không được coi là hoàn tất cho tới khi có bằng chứng thật.
+
 Agent thực hiện **tuần tự**, mỗi giai đoạn có Definition of Done (DoD) rõ ràng. Không chuyển giai đoạn khi DoD chưa đạt.
 
 ### Giai đoạn 1 — Nền móng chất lượng (ưu tiên cao nhất, làm trước mọi tính năng mới)
@@ -65,23 +82,23 @@ Agent thực hiện **tuần tự**, mỗi giai đoạn có Definition of Done (
 6. Thêm structured logging tập trung (request id, user id nếu có, không log secret/PII) — mở rộng `request-logging.interceptor.ts` hiện có.
 
 **DoD Giai đoạn 1:**
-- [ ] Coverage test ≥ 70% cho `commerce/`, `auth/` module.
+- [x] Coverage test ≥ 70% cho `commerce/`, `auth/` module.
 - [ ] CI xanh trên nhánh chính, chặn merge khi test fail.
-- [ ] Không còn `requireRole` gọi tay trong controller — thay bằng decorator.
+- [x] Không còn `requireRole` gọi tay trong controller — thay bằng decorator.
 - [ ] Sentry (hoặc tương đương) nhận được lỗi giả lập từ cả 4 app.
-- [ ] Repo không còn file rác, `.env` không bị commit.
+- [x] Repo không còn file rác, `.env` không bị commit.
 
 ---
 
 ### Giai đoạn 2 — Hạ tầng sẵn sàng chịu tải
 
 **Nhiệm vụ:**
-1. **Cache:** Thêm Redis cache cho `catalog.service.ts` (danh sách sản phẩm, trang chi tiết sản phẩm, danh mục) với TTL hợp lý + invalidate khi sản phẩm được cập nhật.
-2. **WebSocket scale-out:** Gắn `@socket.io/redis-adapter` cho `messaging.gateway.ts` để chat/notification hoạt động đúng khi chạy nhiều instance `apps/api`.
-3. **Search engine:** Tích hợp Meilisearch hoặc Typesense (nhẹ, dễ vận hành hơn Elasticsearch cho quy mô vừa) thay cho `ILIKE` trong `catalog.service.ts::search`. Đồng bộ index qua `OutboxEvent` khi sản phẩm tạo/sửa/xoá — tận dụng cơ chế outbox đã có sẵn, không cần dual-write thủ công.
-4. **Vận chuyển thật:** Nối `shipping.service.ts` với API thật của GHN/GHTK/ViettelPost (tính phí theo trọng lượng/khoảng cách thực tế, thay giá trị hard-code 30.000đ trong `commerce.service.ts::preview`).
-5. **CDN:** Đưa toàn bộ ảnh sản phẩm (đang qua `storage.service.ts` → S3) ra sau CDN (CloudFront/Cloudflare/BunnyCDN).
-6. **Database:** Thêm connection pooling (PgBouncer) nếu chưa có; rà soát index cho các trường lọc/tìm kiếm thường dùng (`slug`, `status`, `shopId`, `categoryId`).
+1. [x] **Cache:** Redis cache-aside cho catalog, TTL theo endpoint, versioned invalidation và degraded mode khi Redis lỗi.
+2. [x] **WebSocket scale-out:** `@socket.io/redis-adapter` và integration test truyền room event qua hai server.
+3. [x] **Search engine:** Meilisearch có relevance/typo/filter/sort, PostgreSQL fallback, outbox sync và full reindex command.
+4. [x] **Vận chuyển:** provider GHN cho quote/tạo vận đơn; `LOCAL_SHIPPING_FEE` chỉ còn là local mode. Việc xác minh GHN staging vẫn chờ credential thật.
+5. [x] **CDN:** immutable object metadata, CDN public URL cho media công khai và signed access cho media riêng. Việc gắn domain/origin policy vẫn chờ hạ tầng thật.
+6. [x] **Database:** PgBouncer transaction pool; migration bổ sung index brand/status-price và status/published-at.
 
 **DoD Giai đoạn 2:**
 - [ ] Load test (k6/Artillery) đạt mục tiêu (ví dụ: 500 request/giây trang catalog, p95 < 300ms) trên staging.

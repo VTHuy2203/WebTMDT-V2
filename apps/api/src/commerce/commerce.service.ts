@@ -3,15 +3,22 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
-import { Prisma, ProductType } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { allowedOrderActions } from "../common/helpers";
 import { PrismaService } from "../prisma.service";
+import { ShippingService } from "../platform/shipping.service";
+import { CatalogCacheService } from "../catalog/catalog-cache.service";
 
 @Injectable()
 export class CommerceService {
-  constructor(private readonly db: PrismaService) {}
+  constructor(
+    private readonly db: PrismaService,
+    @Optional() private readonly shipping?: ShippingService,
+    @Optional() private readonly catalogCache?: CatalogCacheService,
+  ) {}
   private money(v: bigint | number) {
     return Number(v);
   }
@@ -66,7 +73,7 @@ export class CommerceService {
     const rows = await this.db.cartItem.findMany({
       where: { cartId: cart.id },
       include: {
-        product: { include: { shop: true } },
+        product: { include: { shop: true, physicalDetail: true } },
         productVariant: true,
         appPlan: true,
       },
@@ -198,7 +205,7 @@ export class CommerceService {
         product: { status: "ACTIVE" },
       },
       include: {
-        product: { include: { shop: true } },
+        product: { include: { shop: true, physicalDetail: true } },
         productVariant: true,
         appPlan: true,
       },
@@ -221,12 +228,35 @@ export class CommerceService {
         discount: 0,
         total: 0,
         items: [],
+        shippingItems: [],
       };
       g.items.push(line);
       g.subtotal += line.subtotal;
-      if (row.productType === "PHYSICAL") g.shippingFee = 30000;
-      g.total = g.subtotal + g.shippingFee;
+      if (row.productType === "PHYSICAL")
+        g.shippingItems.push({
+          quantity: row.quantity,
+          weightGrams: row.product.physicalDetail?.weightGrams,
+        });
       groups.set(line.shopId, g);
+    }
+    for (const group of groups.values()) {
+      if (group.shippingItems.length) {
+        if (this.shipping) {
+          const quote = await this.shipping.quote({
+              destination: body.shippingAddress ?? {},
+              items: group.shippingItems,
+              orderValue: group.subtotal,
+              serviceId: body.shippingMethodId,
+            });
+          group.shippingFee = quote.fee;
+          group.shippingProvider = quote.provider;
+          group.shippingServiceId = quote.serviceId;
+        } else {
+          group.shippingFee = Number(process.env.LOCAL_SHIPPING_FEE ?? 30000);
+        }
+      }
+      delete group.shippingItems;
+      group.total = group.subtotal + group.shippingFee;
     }
     const shippingFee = [...groups.values()].reduce(
       (s, g) => s + g.shippingFee,
@@ -474,6 +504,7 @@ export class CommerceService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+    await this.catalogCache?.invalidate();
     return result;
   }
 
@@ -563,7 +594,7 @@ export class CommerceService {
       const orders = await tx.order.findMany({
         where: { orderGroupId: p.orderGroupId },
       });
-      const ledger = await tx.ledgerTransaction.create({
+      await tx.ledgerTransaction.create({
         data: {
           referenceType: "PAYMENT",
           referenceId: p.id,
@@ -929,6 +960,7 @@ export class CommerceService {
         data: { status: "EXPIRED" },
       });
     });
+    await this.catalogCache?.invalidate();
     return this.order(userId, id);
   }
 

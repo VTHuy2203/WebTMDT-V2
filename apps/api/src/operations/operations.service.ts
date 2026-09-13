@@ -11,20 +11,18 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { verify } from "argon2";
+import { CatalogCacheService } from "../catalog/catalog-cache.service";
 
 @Injectable()
 export class OperationsService {
-  constructor(readonly db: PrismaService) {}
-  requireRole(actor: any, roles: string[]) {
-    if (!actor.roles?.some((r: string) => roles.includes(r)))
-      throw new ForbiddenException({
-        code: "FORBIDDEN",
-        message: "Bạn không có quyền thực hiện thao tác này",
-      });
-  }
+  constructor(
+    readonly db: PrismaService,
+    @Optional() private readonly catalogCache?: CatalogCacheService,
+  ) {}
   async sellerShop(userId: string) {
     const membership = await this.db.shopMember.findFirst({
       where: {
@@ -61,7 +59,6 @@ export class OperationsService {
     });
   }
   async reviewSeller(actor: any, id: string, body: any) {
-    this.requireRole(actor, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
     const application = await this.db.sellerApplication.findUnique({
       where: { id },
     });
@@ -137,8 +134,9 @@ export class OperationsService {
         ...plans.map((v: any) => Number(v.price ?? 0)),
       ].filter((x) => Number.isSafeInteger(x) && x >= 0);
     const min = prices.length ? Math.min(...prices) : 0;
-    return this.db.product.create({
-      data: {
+    const product = await this.db.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: {
         shopId: shop.id,
         categoryId: body.categoryId || null,
         brandId: body.brandId || null,
@@ -196,9 +194,21 @@ export class OperationsService {
                 })),
               }
             : undefined,
-      },
-      include: { variants: true, appPlans: true },
+        },
+        include: { variants: true, appPlans: true },
+      });
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: "PRODUCT",
+          aggregateId: created.id,
+          eventType: "PRODUCT_INDEX_SYNC",
+          payload: { productId: created.id },
+        },
+      });
+      return created;
     });
+    await this.catalogCache?.invalidate();
+    return product;
   }
   async sellerProducts(userId: string, type?: string) {
     const shop = await this.sellerShop(userId);
@@ -218,23 +228,47 @@ export class OperationsService {
       orderBy: { createdAt: "desc" },
     });
   }
+  async updateStock(userId: string, variantId: string, stockValue: unknown) {
+    const shop = await this.sellerShop(userId);
+    const stock = Number(stockValue);
+    if (!Number.isSafeInteger(stock) || stock < 0)
+      throw new BadRequestException({ code: "INVALID_STOCK", message: "Tồn kho phải là số nguyên không âm" });
+    const result = await this.db.productVariant.updateMany({
+      where: { id: variantId, product: { shopId: shop.id } },
+      data: { stockOnHand: stock, version: { increment: 1 } },
+    });
+    await this.catalogCache?.invalidate();
+    return result;
+  }
   async reviewProduct(actor: any, id: string, body: any) {
-    this.requireRole(actor, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
     const status =
       body.action === "APPROVE"
         ? "ACTIVE"
         : body.action === "HIDE"
           ? "HIDDEN"
           : "REJECTED";
-    return this.db.product.update({
-      where: { id },
-      data: {
-        status,
-        reviewedAt: new Date(),
-        reviewedBy: actor.id,
-        ...(status === "ACTIVE" ? { publishedAt: new Date() } : {}),
-      },
+    const product = await this.db.$transaction(async (tx) => {
+      const updated = await tx.product.update({
+        where: { id },
+        data: {
+          status,
+          reviewedAt: new Date(),
+          reviewedBy: actor.id,
+          ...(status === "ACTIVE" ? { publishedAt: new Date() } : {}),
+        },
+      });
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: "PRODUCT",
+          aggregateId: id,
+          eventType: "PRODUCT_INDEX_SYNC",
+          payload: { productId: id },
+        },
+      });
+      return updated;
     });
+    await this.catalogCache?.invalidate();
+    return product;
   }
   private key() {
     const source =
@@ -509,7 +543,6 @@ export class OperationsService {
   }
 
   async resolveDispute(actor: any, id: string, body: any) {
-    this.requireRole(actor, ["ADMIN", "SUPER_ADMIN", "MODERATOR"]);
     const statusByResolution: Record<string, any> = {
       REFUND: "RESOLVED_REFUNDED",
       REPLACE: "RESOLVED_REPLACED",

@@ -25,7 +25,7 @@ function cartLine({ id, shopId, type = "PHYSICAL", quantity, price }) {
   };
 }
 
-function previewService(rows, captured) {
+function previewService(rows, captured, shipping) {
   return new CommerceService({
     cartItem: { findMany: async () => rows },
     checkoutSession: {
@@ -34,8 +34,29 @@ function previewService(rows, captured) {
         return { id: "checkout-1" };
       },
     },
-  });
+  }, shipping);
 }
+
+test("preview uses the configured carrier quote for each physical shop", async () => {
+  const captured = {};
+  const quotes = [];
+  const service = previewService([
+    cartLine({ id: "physical", shopId: "shop-a", quantity: 2, price: 100_000 }),
+  ], captured, {
+    quote: async (input) => { quotes.push(input); return { fee: 42_500, provider: "GHN", serviceId: 53320 }; },
+  });
+
+  const result = await service.preview(buyerId, {
+    selectedCartItemIds: ["physical"],
+    shippingAddress: { districtId: 1452, wardCode: "21012" },
+  });
+
+  assert.equal(result.shippingFee, 42_500);
+  assert.equal(result.finalTotal, 242_500);
+  assert.equal(quotes.length, 1);
+  assert.equal(quotes[0].destination.districtId, 1452);
+  assert.equal(result.shopBreakdown[0].shippingProvider, "GHN");
+});
 
 test("preview charges shipping once per physical shop and preserves exact line subtotal", async () => {
   const captured = {};

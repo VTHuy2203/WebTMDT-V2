@@ -3,6 +3,7 @@ import { Queue, Worker } from "bullmq";
 import IORedis from "ioredis";
 import { config } from "dotenv";
 import nodemailer from "nodemailer";
+import { configureProductIndex, searchEnabled, syncProduct } from "./product-search";
 
 config({ path: process.env.WORKER_ENV_FILE ?? "../api/.env" });
 
@@ -47,6 +48,7 @@ async function publishOutbox() {
         attempts: 5,
         backoff: { type: "exponential", delay: 1000 },
         removeOnComplete: 1000,
+        removeOnFail: true,
       });
       await db.outboxEvent.update({
         where: { id: event.id },
@@ -73,11 +75,11 @@ async function expirePayments() {
     where: { status: "PENDING", expiresAt: { lt: new Date() } },
     take: 50,
   });
-  for (const intent of intents)
-    await db.$transaction(async (tx) => {
+  for (const intent of intents) {
+    const expired = await db.$transaction(async (tx) => {
       const locked: Array<{ id: string }> =
         await tx.$queryRaw`SELECT id FROM payment_intents WHERE id = ${intent.id}::uuid AND status = 'PENDING' FOR UPDATE`;
-      if (!locked.length) return;
+      if (!locked.length) return false;
       const reservations = await tx.inventoryReservation.findMany({
         where: { orderGroupId: intent.orderGroupId, status: "ACTIVE" },
       });
@@ -128,12 +130,20 @@ async function expirePayments() {
           },
         },
       });
+      return true;
     });
+    if (expired) await connection.incr("catalog:version");
+  }
 }
 
 const worker = new Worker(
   "marketplace-events",
   async (job) => {
+    if (job.name === "PRODUCT_INDEX_SYNC") {
+      await syncProduct(db, String(job.data.productId));
+      await connection.incr("catalog:version");
+      return;
+    }
     if (job.name === "NOTIFICATION_CREATED") {
       if (!mailer) return;
       const notification = await db.notification.findUnique({
@@ -218,20 +228,31 @@ const worker = new Worker(
   { connection, concurrency: 10 },
 );
 
-worker.on("failed", (job, error) =>
+worker.on("failed", async (job, error) => {
   console.error(
     JSON.stringify({
       event: "job_failed",
       jobId: job?.id,
       error: error.message,
     }),
-  ),
-);
+  );
+  if (job?.id && job.attemptsMade >= Number(job.opts.attempts ?? 1)) {
+    await db.outboxEvent.updateMany({
+      where: { id: String(job.id), status: "PUBLISHED" },
+      data: {
+        status: "FAILED",
+        lastError: error.message.slice(0, 1000),
+        availableAt: new Date(Date.now() + 30000),
+      },
+    });
+  }
+});
 setInterval(() => void publishOutbox(), 1000).unref();
 setInterval(() => void expirePayments(), 10000).unref();
 
 async function start() {
   await db.$connect();
+  if (searchEnabled()) await configureProductIndex();
   await publishOutbox();
   console.log("Marketplace worker started");
 }

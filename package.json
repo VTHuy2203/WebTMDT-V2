@@ -7,6 +7,7 @@
     "apps/*"
   ],
   "scripts": {
+    "postinstall": "npm run db:generate",
     "dev:api": "npm run start:dev --workspace=@marketplace/api",
     "dev:worker": "npm run start:dev --workspace=@marketplace/worker",
     "build:api": "npm run build --workspace=@marketplace/api",
@@ -20,8 +21,11 @@
     "dev:seller": "npm run dev --workspace=@marketplace/seller-web",
     "dev:admin": "npm run dev --workspace=@marketplace/admin-web",
     "build": "npm run build --workspaces --if-present",
+    "audit:dependencies": "npm audit --audit-level=high",
     "lint": "eslint apps/api/src apps/worker/src",
-    "typecheck": "npm run typecheck --workspace=@marketplace/api && npm run typecheck --workspace=@marketplace/worker && tsc --noEmit -p apps/buyer-web/tsconfig.json && tsc --noEmit -p apps/seller-web/tsconfig.json && tsc --noEmit -p apps/admin-web/tsconfig.json"
+    "typecheck": "npm run typecheck --workspace=@marketplace/api && npm run typecheck --workspace=@marketplace/worker && tsc --noEmit -p apps/buyer-web/tsconfig.json && tsc --noEmit -p apps/seller-web/tsconfig.json && tsc --noEmit -p apps/admin-web/tsconfig.json",
+    "test:coverage": "npm run test:coverage --workspace=@marketplace/api",
+    "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
     "axios": "^1.7.2",
@@ -50,11 +54,7 @@
     "vite": "^8.3.0"
   },
   "overrides": {
-    "@nestjs/platform-express": {
-      "multer": "2.3.0"
-    },
-    "@prisma/config": {
-      "deepmerge-ts": "8.0.2"
-    }
+    "multer": "2.3.0",
+    "deepmerge-ts": "8.0.2"
   }
 }

@@ -6,6 +6,9 @@ import {
   HttpStatus,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import * as Sentry from "@sentry/nestjs";
+import { REQUEST_ERROR_LOGGED } from "./request-logging.interceptor";
+import { safeRequestPath, writeStructuredLog } from "./structured-logger";
 
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
@@ -15,6 +18,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const request = http.getRequest<{
       headers: Record<string, string>;
       requestId?: string;
+      method?: string;
+      originalUrl?: string;
+      url?: string;
+      [REQUEST_ERROR_LOGGED]?: boolean;
     }>();
     const prismaCode =
       error instanceof Prisma.PrismaClientKnownRequestError ? error.code : null;
@@ -53,16 +60,35 @@ export class ApiExceptionFilter implements ExceptionFilter {
                   ? "INTERNAL_ERROR"
                   : "VALIDATION_ERROR"),
     );
+    const requestId =
+      request.requestId ??
+      request.headers["x-request-id"] ??
+      `req_${crypto.randomUUID()}`;
+    if (status >= 500) {
+      if (!request[REQUEST_ERROR_LOGGED])
+        writeStructuredLog("error", "http_request", {
+          method: request.method,
+          path: safeRequestPath(request.originalUrl ?? request.url),
+          statusCode: status,
+          requestId,
+          error,
+        });
+      Sentry.withScope((scope) => {
+        scope.setTag("request_id", requestId);
+        scope.setContext("request", {
+          method: request.method,
+          path: safeRequestPath(request.originalUrl ?? request.url),
+        });
+        Sentry.captureException(error);
+      });
+    }
     response.status(status).json({
       success: false,
       error: {
         code,
         message,
         details: object.details ?? {},
-        requestId:
-          request.requestId ??
-          request.headers["x-request-id"] ??
-          `req_${crypto.randomUUID()}`,
+        requestId,
       },
     });
   }

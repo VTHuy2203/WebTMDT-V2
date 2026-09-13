@@ -37,7 +37,7 @@ export class AuthController {
   ) {
     const value = await this.auth.register(body);
     this.setRefresh(req, res, value.refreshToken);
-    const { refreshToken, ...safe } = value;
+    const { refreshToken: _refreshToken, ...safe } = value;
     return safe;
   }
   @Post("login") @HttpCode(200) async login(
@@ -47,7 +47,7 @@ export class AuthController {
   ) {
     const value = await this.auth.login(body);
     this.setRefresh(req, res, value.refreshToken);
-    const { refreshToken, ...safe } = value;
+    const { refreshToken: _refreshToken, ...safe } = value;
     return safe;
   }
   @Post("refresh") @HttpCode(200) async refresh(
@@ -56,7 +56,7 @@ export class AuthController {
   ) {
     const value = await this.auth.refresh(req.cookies?.[this.refreshCookie(req)]);
     this.setRefresh(req, res, value.refreshToken);
-    const { refreshToken, ...safe } = value;
+    const { refreshToken: _refreshToken, ...safe } = value;
     return safe;
   }
   @Post("logout") @HttpCode(204) @UseGuards(AuthGuard) async logout(

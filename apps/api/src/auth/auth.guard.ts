@@ -7,6 +7,8 @@ import {
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma.service";
 
+export const AUTHENTICATED_REQUEST = Symbol("AUTHENTICATED_REQUEST");
+
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
@@ -15,6 +17,7 @@ export class AuthGuard implements CanActivate {
   ) {}
   async canActivate(context: ExecutionContext) {
     const req = context.switchToHttp().getRequest<any>();
+    if (req[AUTHENTICATED_REQUEST]) return true;
     const token = String(req.headers.authorization ?? "").replace(
       /^Bearer\s+/i,
       "",
@@ -40,6 +43,7 @@ export class AuthGuard implements CanActivate {
         roles: payload.roles ?? [],
         sessionId: payload.sid,
       };
+      req[AUTHENTICATED_REQUEST] = true;
       return true;
     } catch {
       throw new UnauthorizedException({

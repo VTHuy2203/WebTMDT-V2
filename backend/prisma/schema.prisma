@@ -386,7 +386,9 @@ model Product {
 
   @@index([shopId, status, createdAt])
   @@index([categoryId, status, minPriceAmount])
+  @@index([brandId, status, minPriceAmount])
   @@index([type, status, createdAt])
+  @@index([status, publishedAt])
   @@map("products")
 }
 

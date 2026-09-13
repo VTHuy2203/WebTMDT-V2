@@ -1,7 +1,21 @@
 import { Controller, Get, Param, Query } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { CatalogService } from "./catalog.service";
 
+export const CATALOG_RATE_LIMIT_MAX = Number(
+  process.env.CATALOG_RATE_LIMIT_MAX ?? 750,
+);
+export const CATALOG_RATE_LIMIT_WINDOW_MS = Number(
+  process.env.CATALOG_RATE_LIMIT_WINDOW_MS ?? 1000,
+);
+
 @Controller()
+@Throttle({
+  default: {
+    limit: CATALOG_RATE_LIMIT_MAX,
+    ttl: CATALOG_RATE_LIMIT_WINDOW_MS,
+  },
+})
 export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}
   @Get("products/search") searchLegacy(@Query() q: any) {

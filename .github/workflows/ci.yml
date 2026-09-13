@@ -12,6 +12,39 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://marketplace:marketplace@localhost:5432/marketplace?schema=public
+      REDIS_URL: redis://localhost:6379
+      REDIS_INTEGRATION_URL: redis://localhost:6379
+      MEILISEARCH_URL: http://localhost:7700
+      MEILISEARCH_API_KEY: ci-meilisearch-key-change-me
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: marketplace
+          POSTGRES_PASSWORD: marketplace
+          POSTGRES_DB: marketplace
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U marketplace"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      meilisearch:
+        image: getmeili/meilisearch:v1.51.0
+        env:
+          MEILI_ENV: development
+          MEILI_MASTER_KEY: ci-meilisearch-key-change-me
+        ports: ["7700:7700"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,7 +53,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run db:generate
+      - run: npm run audit:dependencies
+      - run: npm run prisma:migrate --workspace=@marketplace/api
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:api
+      - run: npm run test:coverage
+      - run: npm run test:redis-adapter --workspace=@marketplace/api
+      - run: npm run search:reindex --workspace=@marketplace/worker
       - run: npm run build

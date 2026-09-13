@@ -1,9 +1,19 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
+import { CatalogCacheService } from "./catalog-cache.service";
+import { ProductSearchService } from "./product-search.service";
 
 @Injectable()
 export class CatalogService {
-  constructor(private readonly db: PrismaService) {}
+  constructor(
+    private readonly db: PrismaService,
+    @Optional() private readonly cache?: CatalogCacheService,
+    @Optional() private readonly productSearch?: ProductSearchService,
+  ) {}
+
+  private cached<T>(scope: string, input: unknown, ttl: number, load: () => Promise<T>) {
+    return this.cache?.getOrSet(scope, input, ttl, load) ?? load();
+  }
 
   private productDto(p: any) {
     const attrs = (
@@ -141,12 +151,18 @@ export class CatalogService {
     };
   }
   async search(query: any, forcedType?: string) {
+    return this.cached("search", { query, forcedType }, 30, () => this.searchUncached(query, forcedType));
+  }
+
+  private async searchUncached(query: any, forcedType?: string) {
     const page = Math.max(1, Number(query.page ?? 1));
     const pageSize = Math.min(100, Math.max(1, Number(query.pageSize ?? 12)));
     const where: any = { status: "ACTIVE" };
     if (forcedType) where.type = forcedType;
     else if (query.type) where.type = query.type;
-    if (query.query)
+    const indexed = await this.productSearch?.search(query, forcedType);
+    if (indexed) where.id = { in: indexed.ids };
+    else if (query.query)
       where.OR = [
         { name: { contains: String(query.query), mode: "insensitive" } },
         { description: { contains: String(query.query), mode: "insensitive" } },
@@ -163,12 +179,12 @@ export class CatalogService {
         ...(where.minPriceAmount ?? {}),
         lte: BigInt(query.maxPrice),
       };
-    const [rows, total] = await this.db.$transaction([
+    const [foundRows, databaseTotal] = await this.db.$transaction([
       this.db.product.findMany({
         where,
         include: this.include(),
-        skip: (page - 1) * pageSize,
-        take: pageSize,
+        skip: indexed ? undefined : (page - 1) * pageSize,
+        take: indexed ? undefined : pageSize,
         orderBy:
           query.sortBy === "PRICE_ASC"
             ? { minPriceAmount: "asc" }
@@ -178,6 +194,10 @@ export class CatalogService {
       }),
       this.db.product.count({ where }),
     ]);
+    const rows = indexed
+      ? [...foundRows].sort((a, b) => indexed.ids.indexOf(a.id) - indexed.ids.indexOf(b.id))
+      : foundRows;
+    const total = indexed?.total ?? databaseTotal;
     return {
       success: true,
       data: rows.map((p) => this.productDto(p)),
@@ -185,27 +205,33 @@ export class CatalogService {
     };
   }
   async bySlug(slug: string, type?: string) {
-    const p = await this.db.product.findFirst({
+    return this.cached("by-slug", { slug, type }, 120, async () => {
+      const p = await this.db.product.findFirst({
       where: { slug, ...(type ? { type: type as any } : {}), status: "ACTIVE" },
       include: this.include(),
+      });
+      return p ? this.productDto(p) : null;
     });
-    return p ? this.productDto(p) : null;
   }
   async byId(id: string, type?: string) {
-    const p = await this.db.product.findFirst({
+    return this.cached("by-id", { id, type }, 120, async () => {
+      const p = await this.db.product.findFirst({
       where: { id, ...(type ? { type: type as any } : {}), status: "ACTIVE" },
       include: this.include(),
+      });
+      return p ? this.productDto(p) : null;
     });
-    return p ? this.productDto(p) : null;
   }
   async featured(type?: string) {
-    const rows = await this.db.product.findMany({
+    return this.cached("featured", { type }, 60, async () => {
+      const rows = await this.db.product.findMany({
       where: { status: "ACTIVE", ...(type ? { type: type as any } : {}) },
       include: this.include(),
       take: 12,
       orderBy: { publishedAt: "desc" },
+      });
+      return rows.map((p) => this.productDto(p));
     });
-    return rows.map((p) => this.productDto(p));
   }
   async compare(ids: string) {
     const rows = await this.db.product.findMany({
@@ -215,16 +241,16 @@ export class CatalogService {
     return rows.map((p) => this.productDto(p));
   }
   async categories() {
-    return this.db.category.findMany({
+    return this.cached("categories", {}, 300, () => this.db.category.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
-    });
+    }));
   }
   async brands() {
-    return this.db.brand.findMany({
+    return this.cached("brands", {}, 300, () => this.db.brand.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
-    });
+    }));
   }
   async docs(kind: string) {
     return (

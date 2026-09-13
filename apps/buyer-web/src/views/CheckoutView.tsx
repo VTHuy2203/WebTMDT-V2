@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { ShopGroupedCart, CheckoutPreviewResponse } from '@marketplace/types';
 import { checkoutApi } from '@marketplace/api-client';
 import { Button, Price } from '@marketplace/ui';
@@ -33,7 +33,10 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const [showAddressModal, setShowAddressModal] = useState(false);
   const currentAddress = addresses.find((a) => a.id === selectedAddressId) || getDefaultAddress();
 
-  const selectedItems = groupedCart.flatMap((g) => g.items).filter((i) => i.selected);
+  const selectedItems = useMemo(
+    () => groupedCart.flatMap((g) => g.items).filter((i) => i.selected),
+    [groupedCart],
+  );
 
   const isDigitalItem = (i: { productType?: string; productId?: string; productSlug?: string }) =>
     i.productType === 'DIGITAL_GAME_ACCOUNT' ||
@@ -51,13 +54,17 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const [voucherInput, setVoucherInput] = useState('');
   const [appliedVoucher, setAppliedVoucher] = useState<string | null>(null);
   const [preview, setPreview] = useState<CheckoutPreviewResponse | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [digitalAgreed, setDigitalAgreed] = useState(true);
 
   // Call /checkout/preview as strictly requested by Section 23
   useEffect(() => {
+    let active = true;
     async function loadPreview() {
       if (selectedItems.length === 0) return;
+      setPreview(null);
+      setPreviewError(null);
       try {
         const res = await checkoutApi.preview({
           selectedCartItemIds: selectedItems.map((i) => i.id),
@@ -66,18 +73,18 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
           voucherCodes: appliedVoucher ? [appliedVoucher] : [],
           shippingMethodId: isAllDigital ? 'ship_digital' : shippingMethod,
         });
-        if (isAllDigital) {
-          // Zero shipping fee for 100% digital order
-          res.shippingFee = 0;
-          res.finalTotal = res.subtotal - res.totalVoucherDiscount - res.platformDiscount;
-        }
-        setPreview(res);
+        if (active) setPreview(res);
       } catch (err) {
         console.error('Error previewing checkout:', err);
+        if (active) {
+          const message = (err as any)?.response?.data?.message;
+          setPreviewError(typeof message === 'string' ? message : 'Không thể tính tổng tiền/phí vận chuyển. Vui lòng kiểm tra địa chỉ và thử lại.');
+        }
       }
     }
-    loadPreview();
-  }, [selectedItems, appliedVoucher, shippingMethod, isAllDigital, currentAddress?.id]);
+    void loadPreview();
+    return () => { active = false; };
+  }, [selectedItems, appliedVoucher, shippingMethod, isAllDigital, currentAddress?.id, currentAddress?.districtId, currentAddress?.wardCode, currentAddress?.province, currentAddress?.district, currentAddress?.ward]);
 
   const handleApplyVoucher = () => {
     if (voucherInput.trim()) {
@@ -429,7 +436,13 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                 <Tag className="w-3.5 h-3.5" />
                 {locale === 'en' ? `Code ${appliedVoucher} applied` : `Mã ${appliedVoucher} đã áp dụng`}
               </span>
-              <span>-{formatCurrency(200000)}</span>
+              <span>Đang áp dụng theo kết quả máy chủ</span>
+            </div>
+          )}
+
+          {previewError && (
+            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">
+              {previewError}
             </div>
           )}
 
@@ -444,7 +457,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
             <div className="flex justify-between">
               <span>Phí vận chuyển:</span>
               <span className="font-semibold text-slate-900">
-                {formatCurrency(preview?.shippingFee || 50000)}
+                {preview ? formatCurrency(preview.shippingFee) : 'Đang tính…'}
               </span>
             </div>
             {preview && preview.platformDiscount > 0 && (
@@ -472,6 +485,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
             size="lg"
             onClick={handlePlaceOrder}
             isLoading={isSubmitting}
+            disabled={!preview || Boolean(previewError)}
             className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-lg shadow-blue-500/25"
           >
             <span>{paymentMethod === 'SEPAY_QR' ? 'Tạo Mã QR Thanh Toán 24/7' : 'Xác Nhận Đặt Hàng COD'}</span>

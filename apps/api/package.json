@@ -10,11 +10,16 @@
     "test": "npm run build && node --test test/*.test.cjs",
     "test:smoke": "node test/smoke.cjs",
     "test:chat": "node test/chat-e2e.cjs",
+    "test:redis-adapter": "npm run build && node --test test/redis-adapter.integration.cjs",
     "prisma:generate": "prisma generate --schema ../../backend/prisma/schema.prisma",
     "prisma:push": "prisma db push --schema ../../backend/prisma/schema.prisma",
     "prisma:migrate": "prisma migrate deploy --schema ../../backend/prisma/schema.prisma",
     "prisma:seed": "prisma db seed --schema ../../backend/prisma/schema.prisma",
-    "prisma:studio": "prisma studio --schema ../../backend/prisma/schema.prisma"
+    "prisma:studio": "prisma studio --schema ../../backend/prisma/schema.prisma",
+    "test:coverage": "npm run build && npm run coverage:commerce && npm run coverage:auth",
+    "coverage:commerce": "c8 --all --src src --include=src/commerce/**/*.ts --exclude-after-remap --reporter=text --reporter=json-summary --reports-dir=coverage/commerce --check-coverage --lines=70 --functions=70 --branches=70 --statements=70 node --test test/auth-commerce.test.cjs test/commerce-controller.test.cjs test/commerce-inventory.test.cjs test/commerce-preview.test.cjs test/commerce-query-cart.test.cjs test/commerce-service-coverage.test.cjs test/commerce-settlement.test.cjs test/sepay-webhook.test.cjs",
+    "coverage:auth": "c8 --all --src src --include=src/auth/**/*.ts --exclude-after-remap --reporter=text --reporter=json-summary --reports-dir=coverage/auth --check-coverage --lines=70 --functions=70 --branches=70 --statements=70 node --test test/auth-account-token.test.cjs test/auth-commerce.test.cjs test/auth-http.test.cjs test/auth-success.test.cjs test/logging.test.cjs test/operations-rbac.test.cjs test/sentry.test.cjs",
+    "test:rbac": "npm run build && node --test test/operations-rbac.test.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",
@@ -28,6 +33,7 @@
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.2.3",
     "@prisma/client": "^6.16.2",
+    "@sentry/nestjs": "^10.74.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "argon2": "^0.44.0",
     "class-transformer": "^0.5.1",
@@ -36,7 +42,6 @@
     "dotenv": "^17.2.2",
     "helmet": "^8.1.0",
     "ioredis": "^5.11.1",
-    "multer": "^2.3.0",
     "nodemailer": "^10.0.9",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",

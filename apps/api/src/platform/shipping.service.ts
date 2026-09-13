@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { PrismaService } from "../prisma.service";
@@ -9,10 +11,130 @@ import { NotificationService } from "./notification.service";
 
 @Injectable()
 export class ShippingService {
+  private readonly ghnLocationCache = new Map<string, { districtId: number; wardCode: string; expiresAt: number }>();
   constructor(
     private readonly db: PrismaService,
     private readonly notifications: NotificationService,
   ) {}
+
+  private normalizedLocation(value: unknown) {
+    return String(value ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/\b(thanh pho|tinh|tp|quan|huyen|thi xa|phuong|xa|thi tran)\b/g, "")
+      .replace(/[^a-z0-9]/g, "");
+  }
+
+  private findLocation(rows: any[], value: unknown, nameKey: string) {
+    const expected = this.normalizedLocation(value);
+    return rows.find((row) =>
+      [row[nameKey], ...(row.NameExtension ?? row.extension_names ?? [])]
+        .some((name) => this.normalizedLocation(name) === expected),
+    );
+  }
+
+  private async resolveLegacyGhnAddress(destination: any, token: string, shopId: string) {
+    const cacheKey = [destination.province, destination.district, destination.ward].map((x) => this.normalizedLocation(x)).join(":");
+    const cached = this.ghnLocationCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached;
+    if (!destination.province || !destination.district || !destination.ward)
+      throw new BadRequestException({ code: "SHIPPING_ADDRESS_INCOMPLETE", message: "Địa chỉ cần đủ tỉnh/thành, quận/huyện và phường/xã" });
+    const baseUrl = (process.env.GHN_API_URL ?? "https://dev-online-gateway.ghn.vn/shiip/public-api").replace(/\/$/, "");
+    const headers = { "content-type": "application/json", Token: token, ShopId: shopId };
+    const load = async (path: string, body?: object) => {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: body ? "POST" : "GET",
+        headers,
+        ...(body ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(Number(process.env.SHIPPING_TIMEOUT_MS ?? 5000)),
+      });
+      const payload = await response.json() as any;
+      if (!response.ok || payload?.code !== 200 || !Array.isArray(payload?.data))
+        throw new ServiceUnavailableException({ code: "GHN_LOCATION_UNAVAILABLE", message: "Không thể tải danh mục địa chỉ GHN" });
+      return payload.data;
+    };
+    const province = this.findLocation(await load("/master-data/province"), destination.province, "ProvinceName");
+    if (!province) throw new BadRequestException({ code: "GHN_PROVINCE_NOT_FOUND", message: "Tỉnh/thành không khớp danh mục GHN" });
+    const district = this.findLocation(
+      await load("/master-data/district", { province_id: Number(province.ProvinceID) }),
+      destination.district,
+      "DistrictName",
+    );
+    if (!district) throw new BadRequestException({ code: "GHN_DISTRICT_NOT_FOUND", message: "Quận/huyện không khớp danh mục GHN" });
+    const ward = this.findLocation(
+      await load("/master-data/ward", { district_id: Number(district.DistrictID) }),
+      destination.ward,
+      "WardName",
+    );
+    if (!ward) throw new BadRequestException({ code: "GHN_WARD_NOT_FOUND", message: "Phường/xã không khớp danh mục GHN" });
+    const resolved = { districtId: Number(district.DistrictID), wardCode: String(ward.WardCode), expiresAt: Date.now() + 24 * 60 * 60 * 1000 };
+    this.ghnLocationCache.set(cacheKey, resolved);
+    return resolved;
+  }
+
+  async quote(input: any) {
+    const provider = String(input.provider ?? process.env.SHIPPING_PROVIDER ?? "LOCAL").toUpperCase();
+    if (provider === "LOCAL")
+      return {
+        provider,
+        serviceId: "LOCAL_STANDARD",
+        fee: Number(process.env.LOCAL_SHIPPING_FEE ?? 30000),
+      };
+    if (provider !== "GHN")
+      throw new BadRequestException({ code: "UNSUPPORTED_SHIPPING_PROVIDER", message: `Nhà vận chuyển ${provider} chưa được hỗ trợ` });
+
+    const token = process.env.GHN_TOKEN;
+    const shopId = process.env.GHN_SHOP_ID;
+    const fromDistrictId = Number(input.origin?.districtId ?? process.env.GHN_FROM_DISTRICT_ID);
+    let toDistrictId = Number(input.destination?.districtId ?? input.destination?.district_id);
+    let toWardCode = String(input.destination?.wardCode ?? input.destination?.ward_code ?? "");
+    if (!token || !shopId || !Number.isInteger(fromDistrictId))
+      throw new ServiceUnavailableException({ code: "GHN_NOT_CONFIGURED", message: "GHN chưa được cấu hình đầy đủ" });
+    if (!Number.isInteger(toDistrictId) || !toWardCode) {
+      const resolved = await this.resolveLegacyGhnAddress(input.destination ?? {}, token, shopId);
+      toDistrictId = resolved.districtId;
+      toWardCode = resolved.wardCode;
+    }
+
+    const items = Array.isArray(input.items) ? input.items : [];
+    const weight = Math.max(1, items.reduce(
+      (sum: number, item: any) => sum + Number(item.weightGrams ?? process.env.DEFAULT_ITEM_WEIGHT_GRAMS ?? 500) * Number(item.quantity ?? 1),
+      0,
+    ));
+    if (weight > 50000)
+      throw new BadRequestException({ code: "PARCEL_TOO_HEAVY", message: "GHN chỉ nhận kiện hàng tối đa 50 kg" });
+    const baseUrl = (process.env.GHN_API_URL ?? "https://dev-online-gateway.ghn.vn/shiip/public-api").replace(/\/$/, "");
+    try {
+      const response = await fetch(`${baseUrl}/v2/shipping-order/fee`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Token: token, ShopId: shopId },
+        body: JSON.stringify({
+          service_id: input.serviceId ? Number(input.serviceId) : undefined,
+          service_type_id: input.serviceId ? undefined : Number(process.env.GHN_SERVICE_TYPE_ID ?? (weight >= 20000 ? 5 : 2)),
+          from_district_id: fromDistrictId,
+          to_district_id: toDistrictId,
+          to_ward_code: toWardCode,
+          weight,
+          length: Number(process.env.DEFAULT_PARCEL_LENGTH_CM ?? 20),
+          width: Number(process.env.DEFAULT_PARCEL_WIDTH_CM ?? 15),
+          height: Number(process.env.DEFAULT_PARCEL_HEIGHT_CM ?? 10),
+          insurance_value: Math.max(0, Math.min(Number(input.orderValue ?? 0), 5_000_000)),
+        }),
+        signal: AbortSignal.timeout(Number(process.env.SHIPPING_TIMEOUT_MS ?? 5000)),
+      });
+      const payload = await response.json() as any;
+      if (!response.ok || payload?.code !== 200 || !Number.isFinite(Number(payload?.data?.total)))
+        throw new Error(payload?.message ?? `HTTP ${response.status}`);
+      return { provider, serviceId: input.serviceId ?? process.env.GHN_SERVICE_TYPE_ID ?? 2, fee: Number(payload.data.total) };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new ServiceUnavailableException({
+        code: "SHIPPING_QUOTE_UNAVAILABLE",
+        message: "Không thể lấy phí vận chuyển từ GHN. Vui lòng thử lại.",
+      });
+    }
+  }
 
   async create(user: any, orderId: string, input: any) {
     const order = await this.db.order.findFirst({
@@ -21,7 +143,13 @@ export class ShippingService {
         shop: { members: { some: { userId: user.id } } },
         items: { some: { productType: "PHYSICAL" } },
       },
-      include: { group: true },
+      include: {
+        group: true,
+        items: {
+          where: { productType: "PHYSICAL" },
+          include: { snapshot: true, product: { include: { physicalDetail: true } } },
+        },
+      },
     });
     if (!order) throw new NotFoundException();
     if (
@@ -34,7 +162,69 @@ export class ShippingService {
     if (existing) return existing;
     const provider = String(input.provider ?? process.env.SHIPPING_PROVIDER ?? "LOCAL").toUpperCase();
     let providerResult: any = {};
-    if (process.env.SHIPPING_API_URL && provider !== "LOCAL") {
+    if (provider === "GHN") {
+      const address = (order.shippingAddress ?? {}) as any;
+      const token = process.env.GHN_TOKEN;
+      const shopId = process.env.GHN_SHOP_ID;
+      const toName = String(address.recipientName ?? address.fullName ?? address.name ?? input.toName ?? "");
+      const toPhone = String(address.phone ?? address.phoneNumber ?? input.toPhone ?? "");
+      const toAddress = String(address.streetAddress ?? address.addressLine ?? address.address ?? input.toAddress ?? "");
+      const toWardCode = String(address.wardCode ?? address.ward_code ?? input.toWardCode ?? "");
+      const toDistrictId = Number(address.districtId ?? address.district_id ?? input.toDistrictId);
+      if (!token || !shopId)
+        throw new ServiceUnavailableException({ code: "GHN_NOT_CONFIGURED", message: "GHN chưa được cấu hình đầy đủ" });
+      if (!toName || !toPhone || !toAddress || !address.ward || !address.province)
+        throw new BadRequestException({ code: "SHIPPING_ADDRESS_INCOMPLETE", message: "Địa chỉ giao hàng chưa đủ dữ liệu GHN" });
+      const baseUrl = (process.env.GHN_API_URL ?? "https://dev-online-gateway.ghn.vn/shiip/public-api").replace(/\/$/, "");
+      const totalWeight = order.items.reduce(
+        (sum: number, item: any) => sum + Number(item.product.physicalDetail?.weightGrams ?? process.env.DEFAULT_ITEM_WEIGHT_GRAMS ?? 500) * item.quantity,
+        0,
+      );
+      const response = await fetch(`${baseUrl}/v2/shipping-order/create`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Token: token, ShopId: shopId },
+        body: JSON.stringify({
+          client_order_code: order.code,
+          payment_type_id: Number(process.env.GHN_PAYMENT_TYPE_ID ?? 1),
+          required_note: process.env.GHN_REQUIRED_NOTE ?? "KHONGCHOXEMHANG",
+          to_name: toName,
+          to_phone: toPhone,
+          to_address: toAddress,
+          to_ward_name: address.ward,
+          to_district_name: address.district ?? "",
+          to_province_name: address.province,
+          is_new_to_address: process.env.GHN_NEW_ADDRESS_MODEL === "true",
+          ...(toWardCode ? { to_ward_code: toWardCode } : {}),
+          ...(Number.isInteger(toDistrictId) ? { to_district_id: toDistrictId } : {}),
+          cod_amount: Number(input.codAmount ?? 0),
+          insurance_value: Math.max(0, Math.min(Number(order.subtotalAmount), 5_000_000)),
+          service_type_id: Number(input.serviceTypeId ?? process.env.GHN_SERVICE_TYPE_ID ?? 2),
+          weight: Math.max(1, totalWeight),
+          length: Number(process.env.DEFAULT_PARCEL_LENGTH_CM ?? 20),
+          width: Number(process.env.DEFAULT_PARCEL_WIDTH_CM ?? 15),
+          height: Number(process.env.DEFAULT_PARCEL_HEIGHT_CM ?? 10),
+          items: order.items.map((item: any) => ({
+            name: item.snapshot?.productName ?? "Sản phẩm",
+            code: item.snapshot?.sku ?? item.productId,
+            quantity: item.quantity,
+            price: Number(item.unitPriceAmount),
+            weight: Number(item.product.physicalDetail?.weightGrams ?? process.env.DEFAULT_ITEM_WEIGHT_GRAMS ?? 500),
+            length: Number(process.env.DEFAULT_PARCEL_LENGTH_CM ?? 20),
+            width: Number(process.env.DEFAULT_PARCEL_WIDTH_CM ?? 15),
+            height: Number(process.env.DEFAULT_PARCEL_HEIGHT_CM ?? 10),
+          })),
+        }),
+        signal: AbortSignal.timeout(Number(process.env.SHIPPING_TIMEOUT_MS ?? 5000)),
+      });
+      const payload = await response.json() as any;
+      if (!response.ok || payload?.code !== 200 || !payload?.data?.order_code)
+        throw new ServiceUnavailableException({ code: "SHIPMENT_CREATE_FAILED", message: payload?.message ?? "GHN không thể tạo vận đơn" });
+      providerResult = {
+        trackingNumber: payload.data.order_code,
+        expectedDeliveryAt: payload.data.expected_delivery_time,
+        carrierFee: payload.data.total_fee,
+      };
+    } else if (process.env.SHIPPING_API_URL && provider !== "LOCAL") {
       const response = await fetch(`${process.env.SHIPPING_API_URL}/shipments`, {
         method: "POST",
         headers: {

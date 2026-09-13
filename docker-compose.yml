@@ -5,7 +5,7 @@ services:
       POSTGRES_USER: marketplace
       POSTGRES_PASSWORD: marketplace
       POSTGRES_DB: marketplace
-    ports: ["${POSTGRES_PORT:-5432}:5432"]
+    ports: ["${POSTGRES_PORT:-5433}:5432"]
     volumes: ["marketplace_postgres:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U marketplace"]
@@ -17,6 +17,32 @@ services:
     ports: ["${REDIS_PORT:-6379}:6379"]
     command: redis-server --appendonly yes
     volumes: ["marketplace_redis:/data"]
+  pgbouncer:
+    build: ./infrastructure/pgbouncer
+    volumes:
+      - ./infrastructure/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./infrastructure/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    ports: ["${PGBOUNCER_PORT:-6432}:6432"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U marketplace -d marketplace"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  meilisearch:
+    image: getmeili/meilisearch:v1.51.0
+    environment:
+      MEILI_ENV: development
+      MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY:-local-meilisearch-key-change-me}
+    ports: ["${MEILISEARCH_PORT:-7700}:7700"]
+    volumes: ["marketplace_meilisearch:/meili_data"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   minio:
     image: quay.io/minio/minio:latest
     command: server /data --console-address :9001
@@ -25,16 +51,22 @@ services:
       MINIO_ROOT_PASSWORD: marketplace-local-secret
     ports: ["9000:9000", "9001:9001"]
     volumes: ["marketplace_minio:/data"]
-  api:
+  api: &api-service
+    image: webtmdt-api:latest
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: api
     environment:
       NODE_ENV: development
+      SERVICE_NAME: marketplace-api
+      LOG_HASH_SALT: ${LOG_HASH_SALT:-local-compose-log-pseudonym-salt}
       PORT: 4000
-      DATABASE_URL: postgresql://marketplace:marketplace@postgres:5432/marketplace?schema=public
+      DATABASE_URL: postgresql://marketplace:marketplace@pgbouncer:6432/marketplace?schema=public&connection_limit=10
+      DIRECT_URL: postgresql://marketplace:marketplace@postgres:5432/marketplace?schema=public
       REDIS_URL: redis://redis:6379
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY:-local-meilisearch-key-change-me}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-compose-access-secret-change-me-32chars}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-local-compose-refresh-secret-change-me-32chars}
       CREDENTIAL_MASTER_KEY: ${CREDENTIAL_MASTER_KEY:-local-compose-credential-secret-32chars}
@@ -47,18 +79,60 @@ services:
       S3_FORCE_PATH_STYLE: "true"
       SEPAY_WEBHOOK_SECRET: ${SEPAY_WEBHOOK_SECRET:-local-sepay-secret}
       ALLOW_DEV_PAYMENT_SIMULATOR: ${ALLOW_DEV_PAYMENT_SIMULATOR:-true}
-      SHIPPING_PROVIDER: LOCAL
+      SHIPPING_PROVIDER: ${SHIPPING_PROVIDER:-LOCAL}
+      LOCAL_SHIPPING_FEE: ${LOCAL_SHIPPING_FEE:-30000}
+      GHN_API_URL: ${GHN_API_URL:-https://dev-online-gateway.ghn.vn/shiip/public-api}
+      GHN_TOKEN: ${GHN_TOKEN:-}
+      GHN_SHOP_ID: ${GHN_SHOP_ID:-}
+      GHN_FROM_DISTRICT_ID: ${GHN_FROM_DISTRICT_ID:-}
+      CDN_PUBLIC_BASE_URL: ${CDN_PUBLIC_BASE_URL:-}
       SHIPPING_WEBHOOK_SECRET: ${SHIPPING_WEBHOOK_SECRET:-local-shipping-secret}
       KYC_PROVIDER: LOCAL
       KYC_WEBHOOK_SECRET: ${KYC_WEBHOOK_SECRET:-local-kyc-secret}
     ports: ["${API_PORT:-4000}:4000"]
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_started
+      meilisearch:
+        condition: service_healthy
       minio:
         condition: service_started
+    restart: unless-stopped
+    labels:
+      logging: alloy
+      logging_service: marketplace-api
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:4000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+  api-secondary:
+    <<: *api-service
+    profiles: ["phase2-ha"]
+    ports: []
+  load-balancer:
+    image: nginx:1.28-alpine
+    profiles: ["phase2-ha"]
+    ports: ["${LOAD_BALANCER_PORT:-4080}:80"]
+    volumes:
+      - ./infrastructure/nginx/api.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      api-secondary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/api/v1/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
   worker:
     build:
@@ -67,8 +141,12 @@ services:
       target: worker
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgresql://marketplace:marketplace@postgres:5432/marketplace?schema=public
+      SERVICE_NAME: marketplace-worker
+      DATABASE_URL: postgresql://marketplace:marketplace@pgbouncer:6432/marketplace?schema=public&connection_limit=10
+      DIRECT_URL: postgresql://marketplace:marketplace@postgres:5432/marketplace?schema=public
       REDIS_URL: redis://redis:6379
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY:-local-meilisearch-key-change-me}
       CREDENTIAL_MASTER_KEY: ${CREDENTIAL_MASTER_KEY:-local-compose-credential-secret-32chars}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -76,12 +154,60 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-no-reply@marketplace.local}
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_started
+      meilisearch:
+        condition: service_healthy
+    restart: unless-stopped
+    labels:
+      logging: alloy
+      logging_service: marketplace-worker
+  loki:
+    image: grafana/loki:3.7.0
+    profiles: ["observability"]
+    command: -config.file=/etc/loki/config.yml
+    ports: ["${LOKI_PORT:-3100}:3100"]
+    volumes:
+      - ./observability/loki/config.yml:/etc/loki/config.yml:ro
+      - marketplace_loki:/loki
+    restart: unless-stopped
+  alloy:
+    image: grafana/alloy:v1.11.3
+    profiles: ["observability"]
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+    ports: ["${ALLOY_PORT:-12345}:12345"]
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - marketplace_alloy:/var/lib/alloy/data
+    depends_on:
+      - loki
+    restart: unless-stopped
+  grafana:
+    image: grafana/grafana:12.2.0
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports: ["${GRAFANA_PORT:-3101}:3000"]
+    volumes:
+      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - marketplace_grafana:/var/lib/grafana
+    depends_on:
+      - loki
     restart: unless-stopped
 volumes:
   marketplace_postgres:
   marketplace_redis:
   marketplace_minio:
+  marketplace_meilisearch:
+  marketplace_loki:
+  marketplace_alloy:
+  marketplace_grafana:
